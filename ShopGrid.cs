@@ -209,6 +209,67 @@ namespace MachineRepair.Grid
             return (int)cell.placeability;
         }
 
+        /// <summary>
+        /// Creates sprite-based highlights for every occupied cell. Cells with components,
+        /// wires, or pipes will receive a SpriteRenderer colored by the contents. Returns the
+        /// created renderers so callers can manage their lifecycle (e.g., destroy or pool).
+        /// </summary>
+        /// <param name="highlightSprite">Sprite to render for each occupied cell.</param>
+        /// <param name="parent">Transform used as the parent for all created highlights.</param>
+        /// <param name="componentColor">Tint for cells containing a component.</param>
+        /// <param name="wireColor">Tint for cells containing only wire.</param>
+        /// <param name="pipeColor">Tint for cells containing only pipe.</param>
+        /// <param name="mixedColor">Tint when multiple content types share the cell.</param>
+        /// <param name="sortingLayer">Sorting layer used for the highlight renderers.</param>
+        /// <param name="sortingOrder">Sorting order used for the highlight renderers.</param>
+        public List<SpriteRenderer> CreateOccupancyHighlights(
+            Sprite highlightSprite,
+            Transform parent,
+            Color componentColor,
+            Color wireColor,
+            Color pipeColor,
+            Color mixedColor,
+            string sortingLayer = "Default",
+            int sortingOrder = 0)
+        {
+            var highlights = new List<SpriteRenderer>();
+            if (highlightSprite == null || parent == null) return highlights;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    var c = new Vector2Int(x, y);
+                    var cell = GetCell(c);
+
+                    bool hasComponent = cell.HasComponent;
+                    bool hasWire = cell.HasWire;
+                    bool hasPipe = cell.HasPipe;
+
+                    if (!hasComponent && !hasWire && !hasPipe) continue;
+
+                    Color color = hasComponent && hasWire || hasComponent && hasPipe || hasWire && hasPipe
+                        ? mixedColor
+                        : hasComponent ? componentColor
+                        : hasWire ? wireColor
+                        : pipeColor;
+
+                    var go = new GameObject($"occupancyHighlight_{x}_{y}");
+                    go.transform.SetParent(parent, worldPositionStays: false);
+                    go.transform.position = CellToWorld(c);
+
+                    var renderer = go.AddComponent<SpriteRenderer>();
+                    renderer.sprite = highlightSprite;
+                    renderer.color = color;
+                    renderer.sortingLayerName = sortingLayer;
+                    renderer.sortingOrder = sortingOrder;
+                    highlights.Add(renderer);
+                }
+            }
+
+            return highlights;
+        }
+
         /*
         public bool IsWalkable(Vector2Int c) {
             if (!InBounds(c.x, c.z)) return false;
