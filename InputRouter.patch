@@ -1,0 +1,578 @@
+From ff4e3496cf9a7bf0caec820363a17b80f89461e6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 17 Nov 2025 21:18:03 +0000
+Subject: [PATCH] Improve placement routing robustness
+
+## Summary
+- default input routing to selection when no mode manager is available
+- clear footprint and hover highlights whenever placement resets or modes change
+- keep placement visual cleanup centralized alongside refund logic
+
+## Testing
+- not run (not requested)
+---
+ InputRouter.cs | 455 ++++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 333 insertions(+), 122 deletions(-)
+
+diff --git a/InputRouter.cs b/InputRouter.cs
+index 68de825..f120993 100644
+--- a/InputRouter.cs
++++ b/InputRouter.cs
+@@ -1,5 +1,7 @@
+-using Unity.VisualScripting;
+-using UnityEngine;
++using System.Collections.Generic;
++using MachineRepair;
++using Unity.VisualScripting;
++using UnityEngine;
+ using UnityEngine.EventSystems;     // For UI-hit checks
+ using UnityEngine.InputSystem;      // New Input System
+ 
+@@ -7,13 +9,19 @@ using UnityEngine.InputSystem;      // New Input System
+ /// Uses GameModeManager + GridManager. Uses New Input System (Mouse.current).
+ namespace MachineRepair.Grid
+ {
+-    public class InputRouter : MonoBehaviour, IGameModeListener
+-    {
+-        [Header("References")]
+-        [Tooltip("Auto-found at runtime if left unassigned.")]
+-        [SerializeField] private GridManager grid;
+-        [SerializeField] private GameObject currentComponentPrefab;
+-        private Camera cam;
++    public class InputRouter : MonoBehaviour, IGameModeListener
++    {
++        [Header("References")]
++        [Tooltip("Auto-found at runtime if left unassigned.")]
++        [SerializeField] private GridManager grid;
++        [SerializeField] private Inventory inventory;
++        [SerializeField] private GameObject currentComponentPrefab;
++        private Camera cam;
++
++        [Header("Placement State")]
++        [SerializeField] private ThingDef currentPlacementDef;
++        [SerializeField] private int currentRotation;
++        private string currentPlacementItemId;
+ 
+         [Header("Behavior")]
+         [Tooltip("Ignore clicks when the pointer is over UI (recommended).")]
+@@ -27,20 +35,22 @@ namespace MachineRepair.Grid
+         [SerializeField] private Color highlightTint = new Color(1f, 1f, 0f, 0.25f); // soft yellow, 25% alpha
+         [Tooltip("Optional Scaling (1,1 fits a 1x1 cell).")]
+         [SerializeField] private Vector2 highlightScale = new Vector2(1f, 1f);
+-        [SerializeField] private string highlightSortingLayer = "Default";
+-        [SerializeField] private int highlightSortingOrder = 1000;
+-
+-        private GameObject highlightObject;
+-        private SpriteRenderer highlightRenderer;
+-        private Vector2Int highlightLastPosition;
++        [SerializeField] private string highlightSortingLayer = "Default";
++        [SerializeField] private int highlightSortingOrder = 1000;
++
++        private GameObject highlightObject;
++        private SpriteRenderer highlightRenderer;
++        private Vector2Int highlightLastPosition;
++        private readonly List<SpriteRenderer> footprintHighlights = new();
+         
+ 
+         private void Awake()
+         {
+-            cam = Camera.main;
+-            if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
+-            SetupHighlightVisual();
+-        }
++            cam = Camera.main;
++            if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
++            if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
++            SetupHighlightVisual();
++        }
+ 
+         private void OnEnable()
+         {
+@@ -48,20 +58,26 @@ namespace MachineRepair.Grid
+                 GameModeManager.Instance.RegisterListener(this);
+         }
+ 
+-        private void OnDisable()
+-        {
+-            if (GameModeManager.Instance != null)
+-                GameModeManager.Instance.UnregisterListener(this);
+-        }
++        private void OnDisable()
++        {
++            if (GameModeManager.Instance != null)
++                GameModeManager.Instance.UnregisterListener(this);
++
++            // If we're disabled while a placement is in progress, refund the item
++            // so the player doesn't lose inventory silently.
++            RefundPendingPlacement();
++        }
+ 
+         private void Update()
+         {
+-            var mouse = Mouse.current;
+-            if (mouse == null || cam == null || grid == null) return;
+-
+-            if (blockWhenPointerOverUI && IsPointerOverUI()) return;
+-
+-            if(highlightEnable)UpdateCellHighlight();
++            var mouse = Mouse.current;
++            if (mouse == null || cam == null || grid == null) return;
++
++            if (blockWhenPointerOverUI && IsPointerOverUI()) return;
++
++            HandlePlacementHotkeys();
++
++            if(highlightEnable)UpdateCellHighlight();
+ 
+             // LEFT CLICK
+             if (mouse.leftButton.wasPressedThisFrame)
+@@ -85,14 +101,20 @@ namespace MachineRepair.Grid
+        
+         // -------------- Core Routing ----------------
+ 
+-        private void RouteLeftClick(cellDef cell, Vector2Int cellPos)
+-        {
+-            /*
+-            switch (GameModeManager.Instance.CurrentMode)
+-            {
+-                case GameMode.Selection:
+-                    OnLeftClick_Selection(cell, cellPos);
+-                    break;
++        private void RouteLeftClick(cellDef cell, Vector2Int cellPos)
++        {
++            var modeManager = GameModeManager.Instance;
++            if (modeManager == null)
++            {
++                OnLeftClick_Selection(cell, cellPos);
++                return;
++            }
++
++            switch (modeManager.CurrentMode)
++            {
++                case GameMode.Selection:
++                    OnLeftClick_Selection(cell, cellPos);
++                    break;
+ 
+                 case GameMode.ComponentPlacement:
+                     OnLeftClick_ComponentPlacement(cell, cellPos);
+@@ -106,22 +128,27 @@ namespace MachineRepair.Grid
+                     OnLeftClick_PipePlacement(cell, cellPos);
+                     break;
+ 
+-                case GameMode.Simulation:
+-                    OnLeftClick_Simulation(cell, cellPos);
+-                    break;
+-            }
+-            */
+-            
+-        }
+-
+-        private void RouteRightClick(cellDef cell, Vector2Int cellPos)
+-        {
+-            /*
+-            switch (GameModeManager.Instance.CurrentMode)
+-            {
+-                case GameMode.Selection:
+-                    OnRightClick_Selection(cell, cellPos);
+-                    break;
++                case GameMode.Simulation:
++                    OnLeftClick_Simulation(cell, cellPos);
++                    break;
++            }
++
++        }
++
++        private void RouteRightClick(cellDef cell, Vector2Int cellPos)
++        {
++            var modeManager = GameModeManager.Instance;
++            if (modeManager == null)
++            {
++                OnRightClick_Selection(cell, cellPos);
++                return;
++            }
++
++            switch (modeManager.CurrentMode)
++            {
++                case GameMode.Selection:
++                    OnRightClick_Selection(cell, cellPos);
++                    break;
+ 
+                 case GameMode.ComponentPlacement:
+                     OnRightClick_ComponentPlacement(cell, cellPos);
+@@ -135,13 +162,12 @@ namespace MachineRepair.Grid
+                     OnRightClick_PipePlacement(cell, cellPos);
+                     break;
+ 
+-                case GameMode.Simulation:
+-                    OnRightClick_Simulation(cell, cellPos);
+-                    break;
+-            }
+-            */
+-            
+-        }
++                case GameMode.Simulation:
++                    OnRightClick_Simulation(cell, cellPos);
++                    break;
++            }
++
++        }
+ 
+         
+         // -------------- Per-Mode Handlers --------------
+@@ -179,21 +205,32 @@ namespace MachineRepair.Grid
+         /// LEFT CLICK in ComponentPlacement: place a component if the cell is enabled and not occupied.
+         /// CALL: BuildSystem.PlaceComponentAt(cellPos);
+         /// </summary>
+-        private void OnLeftClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
+-        {
+-          
+-        }
++        private void OnLeftClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
++        {
++            if (currentPlacementDef == null) return;
++
++            var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
++            if (!IsFootprintValid(footprintCells)) return;
++
++            for (int i = 0; i < footprintCells.Count; i++)
++            {
++                var target = footprintCells[i];
++                var targetCell = grid.GetCell(target);
++                targetCell.component = currentPlacementDef.type;
++                grid.SetCell(target, targetCell);
++            }
++
++            ExitPlacementMode();
++        }
+ 
+         /// <summary>
+         /// RIGHT CLICK in ComponentPlacement: rotate/cancel current ghost.
+         /// CALL: BuildSystem.RotateCurrentGhost() or BuildSystem.CancelPlacement();
+         /// </summary>
+-        private void OnRightClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
+-        {
+-            // TODO: Replace with your rotate/cancel logic.
+-            // BuildSystem.RotateCurrentGhost();
+-            Debug.Log($"[ComponentPlacement] Rotate/Cancel at {cellPos}");
+-        }
++        private void OnRightClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
++        {
++            CancelPlacement(returnItemToInventory: true);
++        }
+ 
+         #endregion
+ 
+@@ -288,10 +325,10 @@ namespace MachineRepair.Grid
+         /// True if the cell exists, is enabled, and usable for build actions.
+         /// Modify if you want wires/pipes allowed on occupied cells, etc.
+         /// </summary>
+-        private static bool CellUsable(cellDef cell)
+-        {
+-            return true; // add more rules if needed
+-        }
++        private static bool CellUsable(cellDef cell)
++        {
++            return true; // add more rules if needed
++        }
+ 
+         /// <summary>
+         /// UI block helper for New/Old input systems.
+@@ -303,7 +340,7 @@ namespace MachineRepair.Grid
+             return EventSystem.current.IsPointerOverGameObject();
+         }
+ 
+-        // ----------------- Mouse helpers -----------------
++        // ----------------- Mouse helpers -----------------
+ 
+         // Returns mouse position on grid
+         public Vector2Int GetMousePos()
+@@ -335,10 +372,10 @@ namespace MachineRepair.Grid
+             else return default;
+         }
+ 
+-#region Highlights
+-        /// Creates (once) and configures the hover visual GameObject.
+-        private void SetupHighlightVisual()
+-        {
++#region Highlights
++        /// Creates (once) and configures the hover visual GameObject.
++        private void SetupHighlightVisual()
++        {
+             if (highlightObject != null && highlightRenderer != null)
+             {
+                 // Keep color/scale/sorting in sync if tweaked at runtime
+@@ -367,42 +404,56 @@ namespace MachineRepair.Grid
+             highlightRenderer.sortingOrder = highlightSortingOrder;
+ 
+             // Optional: prevent the highlight from blocking raycasts/clicks (if you use 2D colliders)
+-            highlightRenderer.maskInteraction = SpriteMaskInteraction.None;
+-        }
+-
+-        private void UpdateCellHighlight()
+-        {
+-            if (!highlightEnable)
+-            {
+-                if (highlightObject != null) highlightObject.SetActive(false);
+-                return;
+-            }
+-
+-            //SetupHighlightVisual();
+-
+-            // Get mouse cell and validate
+-            Vector2Int pos = GetMousePos();
+-
+-            cellDef cell = default;
+-
+-            if (grid.InBounds(pos.x, pos.y))
+-            {
+-                cell = grid.GetCell(pos);
+-
+-                if (!highlightObject.activeSelf && cell.placeability != CellPlaceability.Blocked) highlightObject.SetActive(true);
+-                else if(cell.placeability == CellPlaceability.Blocked )highlightObject.SetActive(false);
+-                if (pos != highlightLastPosition)
+-                {
+-
+-                    // Center of the cell (cell size 1)
+-                    Vector3 center = new Vector3(pos.x + 0.5f, pos.y + 0.5f, 0f);
+-                    highlightObject.transform.position = center;
+-                    highlightLastPosition = pos;
+-                }
+-            }else highlightObject.SetActive(false);
+-        }
+-
+-#endregion
++            highlightRenderer.maskInteraction = SpriteMaskInteraction.None;
++        }
++
++        private void UpdateCellHighlight()
++        {
++            if (!highlightEnable)
++            {
++                if (highlightObject != null) highlightObject.SetActive(false);
++                SetFootprintHighlightsActive(false);
++                return;
++            }
++
++            bool isPlacement = GameModeManager.Instance != null &&
++                               GameModeManager.Instance.CurrentMode == GameMode.ComponentPlacement &&
++                               currentPlacementDef != null;
++
++            // Get mouse cell and validate
++            Vector2Int pos = GetMousePos();
++
++            if (isPlacement)
++            {
++                var cells = GetFootprintCells(pos, currentPlacementDef, currentRotation);
++                bool valid = IsFootprintValid(cells);
++                SetFootprintHighlights(cells, valid);
++                if (highlightObject != null) highlightObject.SetActive(false);
++            }
++            else
++            {
++                SetFootprintHighlightsActive(false);
++                if (!grid.InBounds(pos.x, pos.y))
++                {
++                    if (highlightObject != null) highlightObject.SetActive(false);
++                    return;
++                }
++
++                var cell = grid.GetCell(pos);
++                if (!highlightObject.activeSelf && cell.placeability != CellPlaceability.Blocked) highlightObject.SetActive(true);
++                else if (cell.placeability == CellPlaceability.Blocked) highlightObject.SetActive(false);
++                if (pos != highlightLastPosition)
++                {
++
++                    // Center of the cell (cell size 1)
++                    Vector3 center = new Vector3(pos.x + 0.5f, pos.y + 0.5f, 0f);
++                    highlightObject.transform.position = center;
++                    highlightLastPosition = pos;
++                }
++            }
++        }
++
++#endregion
+ 
+         // -------------- IGameModeListener ----------------
+ 
+@@ -413,12 +464,172 @@ namespace MachineRepair.Grid
+             // CursorManager.SetCursorForMode(newMode);
+         }
+ 
+-        public void OnExitMode(GameMode oldMode)
+-        {
+-            // Optional: cleanup when leaving a mode (e.g., cancel wire run)
+-            // Example:
+-            // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
+-        }
++        public void OnExitMode(GameMode oldMode)
++        {
++            // Optional: cleanup when leaving a mode (e.g., cancel wire run)
++            // Example:
++            // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
++            if (oldMode == GameMode.ComponentPlacement)
++            {
++                RefundPendingPlacement();
++                ClearPlacementVisuals();
++            }
++        }
++
++        #region Component Placement Helpers
++        public bool BeginComponentPlacement(string itemId)
++        {
++            if (string.IsNullOrEmpty(itemId) || inventory == null) return false;
++
++            ThingDef def = inventory.GetDef(itemId);
++            if (def == null) return false;
++
++            if (!inventory.RemoveItem(itemId, 1)) return false;
++
++            currentPlacementDef = def;
++            currentPlacementItemId = itemId;
++            currentRotation = 0;
++            GameModeManager.Instance?.SetMode(GameMode.ComponentPlacement);
++            return true;
++        }
++
++        private void HandlePlacementHotkeys()
++        {
++            if (GameModeManager.Instance == null) return;
++            if (GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
++            if (currentPlacementDef == null) return;
++
++            var kb = Keyboard.current;
++            if (kb == null) return;
++
++            if (kb.rKey.wasPressedThisFrame)
++            {
++                currentRotation = (currentRotation + 1) % 4;
++            }
++        }
++
++        private List<Vector2Int> GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
++        {
++            var cells = new List<Vector2Int>();
++            var footprint = def.footprint;
++            for (int y = 0; y < footprint.height; y++)
++            {
++                for (int x = 0; x < footprint.width; x++)
++                {
++                    if (!footprint.occupied[y * footprint.width + x]) continue;
++
++                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
++                    Vector2Int rotated = rotation switch
++                    {
++                        1 => new Vector2Int(local.y, -local.x),
++                        2 => new Vector2Int(-local.x, -local.y),
++                        3 => new Vector2Int(-local.y, local.x),
++                        _ => local
++                    };
++
++                    cells.Add(originCell + rotated);
++                }
++            }
++            return cells;
++        }
++
++        private bool IsFootprintValid(List<Vector2Int> cells)
++        {
++            for (int i = 0; i < cells.Count; i++)
++            {
++                Vector2Int c = cells[i];
++                if (!grid.InBounds(c.x, c.y)) return false;
++                var cell = grid.GetCell(c);
++                if (cell.placeability == CellPlaceability.Blocked) return false;
++                if (cell.HasComponent) return false;
++            }
++            return true;
++        }
++
++        private void SetFootprintHighlights(IReadOnlyList<Vector2Int> cells, bool valid)
++        {
++            EnsureFootprintHighlightPool(cells.Count);
++            Color color = valid ? highlightTint : new Color(1f, 0f, 0f, highlightTint.a);
++            for (int i = 0; i < cells.Count; i++)
++            {
++                var rend = footprintHighlights[i];
++                rend.color = color;
++                rend.gameObject.SetActive(true);
++                rend.transform.position = new Vector3(cells[i].x + 0.5f, cells[i].y + 0.5f, 0f);
++            }
++
++            for (int i = cells.Count; i < footprintHighlights.Count; i++)
++            {
++                footprintHighlights[i].gameObject.SetActive(false);
++            }
++        }
++
++        private void EnsureFootprintHighlightPool(int count)
++        {
++            while (footprintHighlights.Count < count)
++            {
++                var go = new GameObject("footprintHighlight");
++                go.transform.SetParent(transform, worldPositionStays: true);
++                var renderer = go.AddComponent<SpriteRenderer>();
++                renderer.sprite = highlightSprite;
++                renderer.color = highlightTint;
++                renderer.sortingLayerName = highlightSortingLayer;
++                renderer.sortingOrder = highlightSortingOrder;
++                go.transform.localScale = new Vector3(highlightScale.x, highlightScale.y, 1f);
++                footprintHighlights.Add(renderer);
++            }
++        }
++
++        private void SetFootprintHighlightsActive(bool active)
++        {
++            for (int i = 0; i < footprintHighlights.Count; i++)
++                footprintHighlights[i].gameObject.SetActive(active);
++        }
++
++        private void CancelPlacement(bool returnItemToInventory)
++        {
++            ResetPlacementState(returnItemToInventory);
++            GameModeManager.Instance?.SetMode(GameMode.Selection);
++        }
++
++        private void ExitPlacementMode()
++        {
++            ResetPlacementState(returnItem: false);
++            GameModeManager.Instance?.SetMode(GameMode.Selection);
++        }
++
++        private void ResetPlacementState(bool returnItem)
++        {
++            if (returnItem && !string.IsNullOrEmpty(currentPlacementItemId) && inventory != null)
++            {
++                inventory.AddItem(currentPlacementItemId, 1);
++            }
++
++            currentPlacementDef = null;
++            currentPlacementItemId = null;
++            currentRotation = 0;
++
++            ClearPlacementVisuals();
++        }
++
++        private void RefundPendingPlacement()
++        {
++            // Used when we leave placement via external means (mode change, disable) without placing.
++            if (currentPlacementDef == null) return;
++            ResetPlacementState(returnItem: true);
++        }
++
++        private void ClearPlacementVisuals()
++        {
++            SetFootprintHighlightsActive(false);
++            highlightLastPosition = new Vector2Int(int.MinValue, int.MinValue);
++            if (highlightObject != null)
++            {
++                // Keep the hover highlight hidden when exiting placement; Selection will re-enable as needed.
++                highlightObject.SetActive(false);
++            }
++        }
++        #endregion
+ 
+     }
+ }
+-- 
+2.43.0
+

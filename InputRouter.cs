@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using MachineRepair;
 using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.EventSystems;     // For UI-hit checks
@@ -12,8 +14,14 @@ namespace MachineRepair.Grid
         [Header("References")]
         [Tooltip("Auto-found at runtime if left unassigned.")]
         [SerializeField] private GridManager grid;
+        [SerializeField] private Inventory inventory;
         [SerializeField] private GameObject currentComponentPrefab;
         private Camera cam;
+
+        [Header("Placement State")]
+        [SerializeField] private ThingDef currentPlacementDef;
+        [SerializeField] private int currentRotation;
+        private string currentPlacementItemId;
 
         [Header("Behavior")]
         [Tooltip("Ignore clicks when the pointer is over UI (recommended).")]
@@ -33,12 +41,14 @@ namespace MachineRepair.Grid
         private GameObject highlightObject;
         private SpriteRenderer highlightRenderer;
         private Vector2Int highlightLastPosition;
+        private readonly List<SpriteRenderer> footprintHighlights = new();
         
 
         private void Awake()
         {
             cam = Camera.main;
             if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
+            if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
             SetupHighlightVisual();
         }
 
@@ -52,6 +62,10 @@ namespace MachineRepair.Grid
         {
             if (GameModeManager.Instance != null)
                 GameModeManager.Instance.UnregisterListener(this);
+
+            // If we're disabled while a placement is in progress, refund the item
+            // so the player doesn't lose inventory silently.
+            RefundPendingPlacement();
         }
 
         private void Update()
@@ -60,6 +74,8 @@ namespace MachineRepair.Grid
             if (mouse == null || cam == null || grid == null) return;
 
             if (blockWhenPointerOverUI && IsPointerOverUI()) return;
+
+            HandlePlacementHotkeys();
 
             if(highlightEnable)UpdateCellHighlight();
 
@@ -87,8 +103,14 @@ namespace MachineRepair.Grid
 
         private void RouteLeftClick(cellDef cell, Vector2Int cellPos)
         {
-            /*
-            switch (GameModeManager.Instance.CurrentMode)
+            var modeManager = GameModeManager.Instance;
+            if (modeManager == null)
+            {
+                OnLeftClick_Selection(cell, cellPos);
+                return;
+            }
+
+            switch (modeManager.CurrentMode)
             {
                 case GameMode.Selection:
                     OnLeftClick_Selection(cell, cellPos);
@@ -110,14 +132,19 @@ namespace MachineRepair.Grid
                     OnLeftClick_Simulation(cell, cellPos);
                     break;
             }
-            */
-            
+
         }
 
         private void RouteRightClick(cellDef cell, Vector2Int cellPos)
         {
-            /*
-            switch (GameModeManager.Instance.CurrentMode)
+            var modeManager = GameModeManager.Instance;
+            if (modeManager == null)
+            {
+                OnRightClick_Selection(cell, cellPos);
+                return;
+            }
+
+            switch (modeManager.CurrentMode)
             {
                 case GameMode.Selection:
                     OnRightClick_Selection(cell, cellPos);
@@ -139,8 +166,7 @@ namespace MachineRepair.Grid
                     OnRightClick_Simulation(cell, cellPos);
                     break;
             }
-            */
-            
+
         }
 
         
@@ -181,7 +207,21 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnLeftClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
         {
-          
+            if (currentPlacementDef == null) return;
+
+            var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
+            if (!IsFootprintValid(footprintCells)) return;
+
+            for (int i = 0; i < footprintCells.Count; i++)
+            {
+                var target = footprintCells[i];
+                var targetCell = grid.GetCell(target);
+                targetCell.component = currentPlacementDef.type;
+                targetCell.placeability = CellPlaceability.ConnectorsOnly;
+                grid.SetCell(target, targetCell);
+            }
+
+            ExitPlacementMode();
         }
 
         /// <summary>
@@ -190,9 +230,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnRightClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
         {
-            // TODO: Replace with your rotate/cancel logic.
-            // BuildSystem.RotateCurrentGhost();
-            Debug.Log($"[ComponentPlacement] Rotate/Cancel at {cellPos}");
+            CancelPlacement(returnItemToInventory: true);
         }
 
         #endregion
@@ -375,22 +413,36 @@ namespace MachineRepair.Grid
             if (!highlightEnable)
             {
                 if (highlightObject != null) highlightObject.SetActive(false);
+                SetFootprintHighlightsActive(false);
                 return;
             }
 
-            //SetupHighlightVisual();
+            bool isPlacement = GameModeManager.Instance != null &&
+                               GameModeManager.Instance.CurrentMode == GameMode.ComponentPlacement &&
+                               currentPlacementDef != null;
 
             // Get mouse cell and validate
             Vector2Int pos = GetMousePos();
 
-            cellDef cell = default;
-
-            if (grid.InBounds(pos.x, pos.y))
+            if (isPlacement)
             {
-                cell = grid.GetCell(pos);
+                var cells = GetFootprintCells(pos, currentPlacementDef, currentRotation);
+                bool valid = IsFootprintValid(cells);
+                SetFootprintHighlights(cells, valid);
+                if (highlightObject != null) highlightObject.SetActive(false);
+            }
+            else
+            {
+                SetFootprintHighlightsActive(false);
+                if (!grid.InBounds(pos.x, pos.y))
+                {
+                    if (highlightObject != null) highlightObject.SetActive(false);
+                    return;
+                }
 
+                var cell = grid.GetCell(pos);
                 if (!highlightObject.activeSelf && cell.placeability != CellPlaceability.Blocked) highlightObject.SetActive(true);
-                else if(cell.placeability == CellPlaceability.Blocked )highlightObject.SetActive(false);
+                else if (cell.placeability == CellPlaceability.Blocked) highlightObject.SetActive(false);
                 if (pos != highlightLastPosition)
                 {
 
@@ -399,7 +451,7 @@ namespace MachineRepair.Grid
                     highlightObject.transform.position = center;
                     highlightLastPosition = pos;
                 }
-            }else highlightObject.SetActive(false);
+            }
         }
 
 #endregion
@@ -418,7 +470,167 @@ namespace MachineRepair.Grid
             // Optional: cleanup when leaving a mode (e.g., cancel wire run)
             // Example:
             // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
+            if (oldMode == GameMode.ComponentPlacement)
+            {
+                RefundPendingPlacement();
+                ClearPlacementVisuals();
+            }
         }
+
+        #region Component Placement Helpers
+        public bool BeginComponentPlacement(string itemId)
+        {
+            if (string.IsNullOrEmpty(itemId) || inventory == null) return false;
+
+            ThingDef def = inventory.GetDef(itemId);
+            if (def == null) return false;
+
+            if (!inventory.RemoveItem(itemId, 1)) return false;
+
+            currentPlacementDef = def;
+            currentPlacementItemId = itemId;
+            currentRotation = 0;
+            GameModeManager.Instance?.SetMode(GameMode.ComponentPlacement);
+            return true;
+        }
+
+        private void HandlePlacementHotkeys()
+        {
+            if (GameModeManager.Instance == null) return;
+            if (GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
+            if (currentPlacementDef == null) return;
+
+            var kb = Keyboard.current;
+            if (kb == null) return;
+
+            if (kb.rKey.wasPressedThisFrame)
+            {
+                currentRotation = (currentRotation + 1) % 4;
+            }
+        }
+
+        private List<Vector2Int> GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
+        {
+            var cells = new List<Vector2Int>();
+            var footprint = def.footprint;
+            for (int y = 0; y < footprint.height; y++)
+            {
+                for (int x = 0; x < footprint.width; x++)
+                {
+                    if (!footprint.occupied[y * footprint.width + x]) continue;
+
+                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
+                    Vector2Int rotated = rotation switch
+                    {
+                        1 => new Vector2Int(local.y, -local.x),
+                        2 => new Vector2Int(-local.x, -local.y),
+                        3 => new Vector2Int(-local.y, local.x),
+                        _ => local
+                    };
+
+                    cells.Add(originCell + rotated);
+                }
+            }
+            return cells;
+        }
+
+        private bool IsFootprintValid(List<Vector2Int> cells)
+        {
+            for (int i = 0; i < cells.Count; i++)
+            {
+                Vector2Int c = cells[i];
+                if (!grid.InBounds(c.x, c.y)) return false;
+                var cell = grid.GetCell(c);
+                if (cell.placeability == CellPlaceability.Blocked) return false;
+                if (cell.HasComponent) return false;
+            }
+            return true;
+        }
+
+        private void SetFootprintHighlights(IReadOnlyList<Vector2Int> cells, bool valid)
+        {
+            EnsureFootprintHighlightPool(cells.Count);
+            Color color = valid ? highlightTint : new Color(1f, 0f, 0f, highlightTint.a);
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var rend = footprintHighlights[i];
+                rend.color = color;
+                rend.gameObject.SetActive(true);
+                rend.transform.position = new Vector3(cells[i].x + 0.5f, cells[i].y + 0.5f, 0f);
+            }
+
+            for (int i = cells.Count; i < footprintHighlights.Count; i++)
+            {
+                footprintHighlights[i].gameObject.SetActive(false);
+            }
+        }
+
+        private void EnsureFootprintHighlightPool(int count)
+        {
+            while (footprintHighlights.Count < count)
+            {
+                var go = new GameObject("footprintHighlight");
+                go.transform.SetParent(transform, worldPositionStays: true);
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = highlightSprite;
+                renderer.color = highlightTint;
+                renderer.sortingLayerName = highlightSortingLayer;
+                renderer.sortingOrder = highlightSortingOrder;
+                go.transform.localScale = new Vector3(highlightScale.x, highlightScale.y, 1f);
+                footprintHighlights.Add(renderer);
+            }
+        }
+
+        private void SetFootprintHighlightsActive(bool active)
+        {
+            for (int i = 0; i < footprintHighlights.Count; i++)
+                footprintHighlights[i].gameObject.SetActive(active);
+        }
+
+        private void CancelPlacement(bool returnItemToInventory)
+        {
+            ResetPlacementState(returnItemToInventory);
+            GameModeManager.Instance?.SetMode(GameMode.Selection);
+        }
+
+        private void ExitPlacementMode()
+        {
+            ResetPlacementState(returnItem: false);
+            GameModeManager.Instance?.SetMode(GameMode.Selection);
+        }
+
+        private void ResetPlacementState(bool returnItem)
+        {
+            if (returnItem && !string.IsNullOrEmpty(currentPlacementItemId) && inventory != null)
+            {
+                inventory.AddItem(currentPlacementItemId, 1);
+            }
+
+            currentPlacementDef = null;
+            currentPlacementItemId = null;
+            currentRotation = 0;
+
+            ClearPlacementVisuals();
+        }
+
+        private void RefundPendingPlacement()
+        {
+            // Used when we leave placement via external means (mode change, disable) without placing.
+            if (currentPlacementDef == null) return;
+            ResetPlacementState(returnItem: true);
+        }
+
+        private void ClearPlacementVisuals()
+        {
+            SetFootprintHighlightsActive(false);
+            highlightLastPosition = new Vector2Int(int.MinValue, int.MinValue);
+            if (highlightObject != null)
+            {
+                // Keep the hover highlight hidden when exiting placement; Selection will re-enable as needed.
+                highlightObject.SetActive(false);
+            }
+        }
+        #endregion
 
     }
 }
