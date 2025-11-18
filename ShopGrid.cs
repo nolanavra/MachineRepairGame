@@ -39,16 +39,49 @@ namespace MachineRepair.Grid
         public int CellCount => width * height;
         public bool setup = false;
 
+        [Header("Cell Highlights")]
+        [SerializeField] private bool enableCellHighlights = false;
+        [SerializeField] private Sprite cellHighlightSprite;
+        [SerializeField] private Transform cellHighlightParent;
+        [SerializeField] private string cellHighlightSortingLayer = "Default";
+        [SerializeField] private int cellHighlightSortingOrder = 0;
+        [SerializeField] private Color placeableColor = new Color(0.25f, 0.9f, 0.25f, 0.2f);
+        [SerializeField] private Color connectorsOnlyColor = new Color(0.2f, 0.6f, 1f, 0.25f);
+        [SerializeField] private Color displayColor = new Color(0.9f, 0.8f, 0.2f, 0.2f);
+        [SerializeField] private Color blockedColor = new Color(0.6f, 0.6f, 0.6f, 0.15f);
+        [SerializeField] private Color componentContentColor = new Color(1f, 0.55f, 0.2f, 0.35f);
+        [SerializeField] private Color wireContentColor = new Color(0.25f, 0.9f, 0.9f, 0.35f);
+        [SerializeField] private Color pipeContentColor = new Color(0.75f, 0.55f, 1f, 0.35f);
+        [SerializeField] private Color mixedContentColor = new Color(0.95f, 0.35f, 0.35f, 0.35f);
+
+        private SpriteRenderer[] cellHighlights;
+
         private void Start()
         {
-            
+
         }
         void Awake()
         {
             cellDefByType();
             InitGrids();
             setup = true;
-            
+
+            EnsureHighlightParent();
+            BuildCellHighlightPool();
+
+        }
+
+        private void Update()
+        {
+            if (!enableCellHighlights) return;
+            if (!setup) return;
+
+            if (cellHighlights == null || cellHighlights.Length != CellCount)
+            {
+                BuildCellHighlightPool();
+            }
+
+            RefreshCellHighlights();
         }
 
         #region API: GRID
@@ -120,6 +153,85 @@ namespace MachineRepair.Grid
             normalCell.placeability = CellPlaceability.Placeable;
             connectorCell.placeability = CellPlaceability.ConnectorsOnly;
             displayCell.placeability = CellPlaceability.Display;
+        }
+
+        private void EnsureHighlightParent()
+        {
+            if (cellHighlightParent != null) return;
+            var go = new GameObject("CellHighlights");
+            go.transform.SetParent(transform, worldPositionStays: false);
+            cellHighlightParent = go.transform;
+        }
+
+        private void BuildCellHighlightPool()
+        {
+            if (!enableCellHighlights || cellHighlightSprite == null) return;
+
+            EnsureHighlightParent();
+            cellHighlights = new SpriteRenderer[CellCount];
+
+            for (int i = 0; i < CellCount; i++)
+            {
+                var (x, y) = FromIndex(i);
+                var go = new GameObject($"cellHighlight_{x}_{y}");
+                go.transform.SetParent(cellHighlightParent, worldPositionStays: false);
+                go.transform.position = CellToWorld(new Vector2Int(x, y));
+
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = cellHighlightSprite;
+                renderer.sortingLayerName = cellHighlightSortingLayer;
+                renderer.sortingOrder = cellHighlightSortingOrder;
+                renderer.enabled = false;
+                cellHighlights[i] = renderer;
+            }
+        }
+
+        private void RefreshCellHighlights()
+        {
+            if (cellHighlights == null) return;
+
+            for (int i = 0; i < cellHighlights.Length; i++)
+            {
+                var renderer = cellHighlights[i];
+                if (renderer == null) continue;
+
+                var cell = cellByIndex[i];
+                bool hasComponent = cell.HasComponent;
+                bool hasWire = cell.HasWire;
+                bool hasPipe = cell.HasPipe;
+                bool hasContent = hasComponent || hasWire || hasPipe;
+
+                // Disable highlights for out-of-bounds or blocked cells without contents
+                if (cell.placeability == CellPlaceability.Blocked && !hasContent)
+                {
+                    renderer.enabled = false;
+                    continue;
+                }
+
+                Color color;
+                if (hasContent)
+                {
+                    bool mixed = (hasComponent ? 1 : 0) + (hasWire ? 1 : 0) + (hasPipe ? 1 : 0) > 1;
+                    color = mixed
+                        ? mixedContentColor
+                        : hasComponent ? componentContentColor
+                        : hasWire ? wireContentColor
+                        : pipeContentColor;
+                }
+                else
+                {
+                    color = cell.placeability switch
+                    {
+                        CellPlaceability.Placeable => placeableColor,
+                        CellPlaceability.ConnectorsOnly => connectorsOnlyColor,
+                        CellPlaceability.Display => displayColor,
+                        _ => blockedColor
+                    };
+                }
+
+                renderer.color = color;
+                renderer.enabled = true;
+            }
         }
 
 
