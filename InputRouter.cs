@@ -182,8 +182,21 @@ namespace MachineRepair.Grid
         private void OnLeftClick_Selection(cellDef cell, Vector2Int cellPos)
         {
             if (!CellUsable(cell)) return;
-            //SelectionManager.Instance.SelectCell(cellPos);
-            //Debug.Log($"[Selection] Select at {cellPos}");
+
+            var targets = BuildSelectionTargets(cell);
+            bool sameCell = cellPos == selectedCell;
+
+            if (!sameCell) selectionCycleIndex = 0;
+            else if (targets.Count > 0) selectionCycleIndex = (selectionCycleIndex + 1) % targets.Count;
+            else selectionCycleIndex = 0;
+
+            selectionCycleOrder.Clear();
+            selectionCycleOrder.AddRange(targets);
+
+            selectedCell = cellPos;
+            selectedTarget = targets.Count > 0 ? targets[selectionCycleIndex] : CellSelectionTarget.None;
+
+            ApplySelection(cellPos, cell, selectedTarget);
         }
 
         /// <summary>
@@ -193,8 +206,7 @@ namespace MachineRepair.Grid
         private void OnRightClick_Selection(cellDef cell, Vector2Int cellPos)
         {
             if (!CellUsable(cell)) return;
-            //SelectionManager.Instance.ClearSelection();
-            //Debug.Log($"[Selection] Context/Move at {cellPos}");
+            ClearSelection();
         }
 
         #endregion
