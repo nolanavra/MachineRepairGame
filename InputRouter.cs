@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using MachineRepair;
 using Unity.VisualScripting;
@@ -43,32 +42,6 @@ namespace MachineRepair.Grid
         private SpriteRenderer highlightRenderer;
         private Vector2Int highlightLastPosition;
         private readonly List<SpriteRenderer> footprintHighlights = new();
-
-        public enum CellSelectionTarget
-        {
-            None,
-            Component,
-            Pipe,
-            Wire
-        }
-
-        private readonly List<CellSelectionTarget> selectionCycleOrder = new();
-        private int selectionCycleIndex;
-        private Vector2Int selectedCell = new(int.MinValue, int.MinValue);
-        private CellSelectionTarget selectedTarget = CellSelectionTarget.None;
-
-        public struct SelectionInfo
-        {
-            public bool hasSelection;
-            public Vector2Int cell;
-            public CellSelectionTarget target;
-            public cellDef cellData;
-        }
-
-        public event Action<SelectionInfo> SelectionChanged;
-
-        public SelectionInfo CurrentSelection => currentSelection;
-        private SelectionInfo currentSelection;
         
 
         private void Awake()
@@ -509,7 +482,6 @@ namespace MachineRepair.Grid
             // Optional: cleanup when leaving a mode (e.g., cancel wire run)
             // Example:
             // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
-            ClearSelection();
             if (oldMode == GameMode.ComponentPlacement)
             {
                 RefundPendingPlacement();
@@ -669,52 +641,6 @@ namespace MachineRepair.Grid
                 // Keep the hover highlight hidden when exiting placement; Selection will re-enable as needed.
                 highlightObject.SetActive(false);
             }
-        }
-
-        private static List<CellSelectionTarget> BuildSelectionTargets(cellDef cell)
-        {
-            var targets = new List<CellSelectionTarget>(3);
-            if (cell.HasComponent) targets.Add(CellSelectionTarget.Component);
-            if (cell.HasPipe) targets.Add(CellSelectionTarget.Pipe);
-            if (cell.HasWire) targets.Add(CellSelectionTarget.Wire);
-            return targets;
-        }
-
-        private void ApplySelection(Vector2Int cellPos, cellDef cell, CellSelectionTarget target)
-        {
-            currentSelection = new SelectionInfo
-            {
-                hasSelection = target != CellSelectionTarget.None,
-                cell = cellPos,
-                target = target,
-                cellData = cell
-            };
-            SelectionChanged?.Invoke(currentSelection);
-            switch (target)
-            {
-                case CellSelectionTarget.Component:
-                    Debug.Log($"[Selection] Selected component {cell.component} at {cellPos}");
-                    break;
-                case CellSelectionTarget.Pipe:
-                    Debug.Log($"[Selection] Selected pipe at {cellPos}");
-                    break;
-                case CellSelectionTarget.Wire:
-                    Debug.Log($"[Selection] Selected wire {cell.wire} at {cellPos}");
-                    break;
-                default:
-                    Debug.Log($"[Selection] Selected cell {cellPos} (no contents)");
-                    break;
-            }
-        }
-
-        private void ClearSelection()
-        {
-            selectedCell = new Vector2Int(int.MinValue, int.MinValue);
-            selectedTarget = CellSelectionTarget.None;
-            selectionCycleIndex = 0;
-            selectionCycleOrder.Clear();
-            currentSelection = default;
-            SelectionChanged?.Invoke(currentSelection);
         }
         #endregion
 
