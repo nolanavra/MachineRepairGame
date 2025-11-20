@@ -16,6 +16,7 @@ namespace MachineRepair.Grid
         [SerializeField] private GridManager grid;
         [SerializeField] private Inventory inventory;
         [SerializeField] private GameObject currentComponentPrefab;
+        [SerializeField] private WirePlacementTool wireTool;
         private Camera cam;
 
         [Header("Placement State")]
@@ -49,6 +50,11 @@ namespace MachineRepair.Grid
             cam = Camera.main;
             if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
             if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
+            if (wireTool == null) wireTool = Object.FindFirstObjectByType<WirePlacementTool>();
+            if (wireTool == null)
+            {
+                Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
+            }
             SetupHighlightVisual();
         }
 
@@ -256,10 +262,7 @@ namespace MachineRepair.Grid
         private void OnLeftClick_WirePlacement(cellDef cell, Vector2Int cellPos)
         {
             if (!CellUsable(cell)) return;
-
-            // TODO: Replace with your wire placement logic.
-            // if (!WireTool.HasActivePath) WireTool.StartAt(cellPos); else WireTool.AddPoint(cellPos);
-            Debug.Log($"[WirePlacement] Point at {cellPos}");
+            wireTool?.HandleClick(cellPos);
         }
 
         /// <summary>
@@ -268,9 +271,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnRightClick_WirePlacement(cellDef cell, Vector2Int cellPos)
         {
-            // TODO: Replace with your wire cancel/undo logic.
-            // WireTool.UndoLastPoint();
-            Debug.Log($"[WirePlacement] Undo/Cancel at {cellPos}");
+            wireTool?.CancelPreview();
         }
 
         #endregion
@@ -486,6 +487,10 @@ namespace MachineRepair.Grid
             {
                 RefundPendingPlacement();
                 ClearPlacementVisuals();
+            }
+            else if (oldMode == GameMode.WirePlacement)
+            {
+                wireTool?.CancelPreview();
             }
         }
 
