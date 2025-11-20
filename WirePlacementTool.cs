@@ -31,6 +31,16 @@ namespace MachineRepair
         {
             cam = cameraOverride != null ? cameraOverride : Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
+
+            if (cam == null)
+            {
+                Debug.LogError("WirePlacementTool requires a Camera reference for previews.");
+            }
+
+            if (grid == null)
+            {
+                Debug.LogError("WirePlacementTool requires a GridManager in the scene.");
+            }
         }
 
         private void Update()
