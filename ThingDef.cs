@@ -16,6 +16,7 @@ namespace MachineRepair{
         public FootprintMask footprint;
 
         [Header("Connection Ports")]
+        [Tooltip("Describes port layout plus how inputs map to outputs or simulation variables.")]
         public PortDef connectionPorts;
 
         [Header("Inventory")]

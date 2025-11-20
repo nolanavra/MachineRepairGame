@@ -40,10 +40,17 @@ namespace MachineRepair.Grid
         [SerializeField] private string highlightSortingLayer = "Default";
         [SerializeField] private int highlightSortingOrder = 1000;
 
+        [Header("Port Highlighter")]
+        [SerializeField] private Sprite portHighlightSprite;
+        [SerializeField] private Color inputPortTint = new Color(0f, 0.7f, 1f, 0.4f);
+        [SerializeField] private Color outputPortTint = new Color(0f, 1f, 0.6f, 0.4f);
+        [SerializeField] private int portHighlightSortingOrder = 1001;
+
         private GameObject highlightObject;
         private SpriteRenderer highlightRenderer;
         private Vector2Int highlightLastPosition;
         private readonly List<SpriteRenderer> footprintHighlights = new();
+        private readonly List<SpriteRenderer> portHighlights = new();
 
         private int selectionCycleIndex;
         private readonly List<CellSelectionTarget> selectionCycleOrder = new();
@@ -469,6 +476,7 @@ namespace MachineRepair.Grid
             {
                 if (highlightObject != null) highlightObject.SetActive(false);
                 SetFootprintHighlightsActive(false);
+                SetPortHighlightsActive(false);
                 return;
             }
 
@@ -484,11 +492,13 @@ namespace MachineRepair.Grid
                 var cells = GetFootprintCells(pos, currentPlacementDef, currentRotation);
                 bool valid = IsFootprintValid(cells);
                 SetFootprintHighlights(cells, valid);
+                SetPortHighlights(currentPlacementDef, pos, currentRotation, valid);
                 if (highlightObject != null) highlightObject.SetActive(false);
             }
             else
             {
                 SetFootprintHighlightsActive(false);
+                SetPortHighlightsActive(false);
                 if (!grid.InBounds(pos.x, pos.y))
                 {
                     if (highlightObject != null) highlightObject.SetActive(false);
@@ -579,18 +589,46 @@ namespace MachineRepair.Grid
                     if (!footprint.occupied[y * footprint.width + x]) continue;
 
                     Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
-                    Vector2Int rotated = rotation switch
-                    {
-                        1 => new Vector2Int(local.y, -local.x),
-                        2 => new Vector2Int(-local.x, -local.y),
-                        3 => new Vector2Int(-local.y, local.x),
-                        _ => local
-                    };
+                    Vector2Int rotated = RotateLocal(local, rotation);
 
                     cells.Add(originCell + rotated);
                 }
             }
             return cells;
+        }
+
+        private void SetPortHighlights(ThingDef def, Vector2Int originCell, int rotation, bool placementValid)
+        {
+            if (def?.connectionPorts == null || def.connectionPorts.ports == null || def.connectionPorts.ports.Length == 0)
+            {
+                SetPortHighlightsActive(false);
+                return;
+            }
+
+            var ports = def.connectionPorts.ports;
+            EnsurePortHighlightPool(ports.Length);
+            Color invalidInputColor = new Color(1f, 0.4f, 0.4f, inputPortTint.a);
+            Color invalidOutputColor = new Color(1f, 0.4f, 0.4f, outputPortTint.a);
+
+            for (int i = 0; i < ports.Length; i++)
+            {
+                var port = ports[i];
+                var renderer = portHighlights[i];
+
+                Vector2Int local = port.cell - def.footprint.origin;
+                Vector2Int rotated = RotateLocal(local, rotation);
+                Vector2Int worldCell = originCell + rotated;
+
+                renderer.color = port.isInput ? (placementValid ? inputPortTint : invalidInputColor)
+                                               : (placementValid ? outputPortTint : invalidOutputColor);
+                renderer.gameObject.SetActive(true);
+                renderer.transform.position = new Vector3(worldCell.x + 0.5f, worldCell.y + 0.5f, 0f);
+            }
+
+            for (int i = ports.Length; i < portHighlights.Count; i++)
+            {
+                portHighlights[i].gameObject.SetActive(false);
+            }
         }
 
         private bool IsFootprintValid(List<Vector2Int> cells)
@@ -646,6 +684,39 @@ namespace MachineRepair.Grid
                 footprintHighlights[i].gameObject.SetActive(active);
         }
 
+        private void EnsurePortHighlightPool(int count)
+        {
+            while (portHighlights.Count < count)
+            {
+                var go = new GameObject("portHighlight");
+                go.transform.SetParent(transform, worldPositionStays: true);
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = portHighlightSprite != null ? portHighlightSprite : highlightSprite;
+                renderer.color = outputPortTint;
+                renderer.sortingLayerName = highlightSortingLayer;
+                renderer.sortingOrder = portHighlightSortingOrder;
+                go.transform.localScale = new Vector3(highlightScale.x, highlightScale.y, 1f);
+                portHighlights.Add(renderer);
+            }
+        }
+
+        private void SetPortHighlightsActive(bool active)
+        {
+            for (int i = 0; i < portHighlights.Count; i++)
+                portHighlights[i].gameObject.SetActive(active);
+        }
+
+        private static Vector2Int RotateLocal(Vector2Int local, int rotation)
+        {
+            return rotation switch
+            {
+                1 => new Vector2Int(local.y, -local.x),
+                2 => new Vector2Int(-local.x, -local.y),
+                3 => new Vector2Int(-local.y, local.x),
+                _ => local
+            };
+        }
+
         private void CancelPlacement(bool returnItemToInventory)
         {
             ResetPlacementState(returnItemToInventory);
@@ -688,6 +759,7 @@ namespace MachineRepair.Grid
                 // Keep the hover highlight hidden when exiting placement; Selection will re-enable as needed.
                 highlightObject.SetActive(false);
             }
+            SetPortHighlightsActive(false);
         }
         #endregion
 
