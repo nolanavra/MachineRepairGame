@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using MachineRepair;
 using Unity.VisualScripting;
@@ -43,6 +44,13 @@ namespace MachineRepair.Grid
         private SpriteRenderer highlightRenderer;
         private Vector2Int highlightLastPosition;
         private readonly List<SpriteRenderer> footprintHighlights = new();
+
+        private int selectionCycleIndex;
+        private readonly List<CellSelectionTarget> selectionCycleOrder = new();
+        private Vector2Int selectedCell = new Vector2Int(int.MinValue, int.MinValue);
+        private CellSelectionTarget selectedTarget = CellSelectionTarget.None;
+
+        public SelectionInfo CurrentSelection { get; private set; }
         
 
         private void Awake()
@@ -352,6 +360,40 @@ namespace MachineRepair.Grid
             if (EventSystem.current == null) return false;
             // Works with mouse (-1) in standalone; for advanced setups, use PointerEventData.
             return EventSystem.current.IsPointerOverGameObject();
+        }
+
+        private List<CellSelectionTarget> BuildSelectionTargets(cellDef cell)
+        {
+            var targets = new List<CellSelectionTarget>();
+
+            if (cell.HasComponent) targets.Add(CellSelectionTarget.Component);
+            if (cell.HasPipe) targets.Add(CellSelectionTarget.Pipe);
+            if (cell.HasWire) targets.Add(CellSelectionTarget.Wire);
+
+            return targets;
+        }
+
+        private void ApplySelection(Vector2Int cellPos, cellDef cell, CellSelectionTarget target)
+        {
+            CurrentSelection = new SelectionInfo
+            {
+                hasSelection = target != CellSelectionTarget.None,
+                cell = cellPos,
+                cellData = cell,
+                target = target
+            };
+
+            SelectionChanged?.Invoke(CurrentSelection);
+        }
+
+        private void ClearSelection()
+        {
+            selectionCycleIndex = 0;
+            selectionCycleOrder.Clear();
+            selectedCell = new Vector2Int(int.MinValue, int.MinValue);
+            selectedTarget = CellSelectionTarget.None;
+            CurrentSelection = new SelectionInfo { hasSelection = false };
+            SelectionChanged?.Invoke(CurrentSelection);
         }
 
         // ----------------- Mouse helpers -----------------
