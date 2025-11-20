@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using MachineRepair.Grid;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
@@ -14,6 +16,7 @@ public class SimpleInventoryUI : MonoBehaviour
     [Header("Inventory Source")]
     public Inventory inventory;
     public GameObject inventoryPanel;
+    [SerializeField] private InputRouter inputRouter;
 
     [Header("UI Setup")]
     public GameObject slotPrefab;           // prefab with Icon + Count
@@ -24,6 +27,7 @@ public class SimpleInventoryUI : MonoBehaviour
 
 
     private readonly List<GameObject> slotInstances = new List<GameObject>();
+    private int draggingSlotIndex = -1;
 
     private void Reset()
     {
@@ -32,6 +36,8 @@ public class SimpleInventoryUI : MonoBehaviour
 
     private void Start()
     {
+        if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
+
         if (refreshOnStart)
             RefreshUI();
     }
@@ -48,6 +54,12 @@ public class SimpleInventoryUI : MonoBehaviour
 
     public void ShowHideInventory()
     {
+        if (inventoryPanel == null)
+        {
+            Debug.LogWarning("SimpleInventoryUI: No inventory panel assigned to toggle.");
+            return;
+        }
+
         if (inventoryPanel.activeSelf) inventoryPanel.SetActive(false);
         else inventoryPanel.SetActive(true);
     }
@@ -106,29 +118,11 @@ public class SimpleInventoryUI : MonoBehaviour
                     countText = txt;
             }
 
-            // Set visuals
-            if (slotData.IsEmpty)
-            {
-                // Empty slot: clear icon & text
-                if (icon != null) icon.sprite = null;
-                if (icon != null) icon.color = new Color(1, 1, 1, 0); // hide icon
-                if (countText != null) countText.text = "";
-            }
-            else
-            {
-                var def = inventory.GetDef(slotData.id);
+            var slotComponent = slotGO.GetComponent<InventorySlotUI>();
+            if (slotComponent == null) slotComponent = slotGO.AddComponent<InventorySlotUI>();
 
-                if (icon != null)
-                {
-                    icon.sprite = def != null ? def.icon : null;
-                    icon.color = (icon.sprite != null) ? Color.white : new Color(1, 1, 1, 0);
-                }
-
-                if (countText != null)
-                {
-                    countText.text = (slotData.quantity > 1) ? slotData.quantity.ToString() : "";
-                }
-            }
+            var def = slotData.IsEmpty ? null : inventory.GetDef(slotData.id);
+            slotComponent.Initialize(this, i, icon, countText, def?.icon, slotData.quantity);
         }
     }
 
@@ -137,8 +131,122 @@ public class SimpleInventoryUI : MonoBehaviour
         for (int i = 0; i < slotInstances.Count; i++)
         {
             if (slotInstances[i] != null)
-                DestroyImmediate(slotInstances[i]);
+                Destroy(slotInstances[i]);
         }
         slotInstances.Clear();
+    }
+
+    internal void HandleSlotClicked(int slotIndex)
+    {
+        if (inventory == null) return;
+        var slots = inventory.GetSlots();
+        if (slotIndex < 0 || slotIndex >= slots.Count) return;
+        var slotData = slots[slotIndex];
+        if (slotData.IsEmpty) return;
+
+        if (!inventory.ConsumeFromSlot(slotIndex, out var itemId)) return;
+
+        bool placementStarted = inputRouter != null && inputRouter.BeginComponentPlacement(itemId, removeFromInventory: false);
+        if (!placementStarted)
+        {
+            inventory.AddItem(itemId, 1);
+        }
+
+        RefreshUI();
+    }
+
+    internal void BeginSlotDrag(int slotIndex)
+    {
+        draggingSlotIndex = slotIndex;
+    }
+
+    internal void HandleSlotDrop(int targetIndex)
+    {
+        if (inventory == null) return;
+        if (draggingSlotIndex < 0 || draggingSlotIndex == targetIndex) return;
+
+        if (inventory.SwapSlots(draggingSlotIndex, targetIndex))
+            RefreshUI();
+
+        draggingSlotIndex = -1;
+    }
+
+    internal void EndSlotDrag()
+    {
+        draggingSlotIndex = -1;
+    }
+}
+
+internal class InventorySlotUI : MonoBehaviour, IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler
+{
+    private SimpleInventoryUI owner;
+    private int slotIndex;
+    private Image icon;
+    private Text countText;
+    private RectTransform rectTransform;
+    private Vector3 startPosition;
+    private CanvasGroup canvasGroup;
+
+    public void Initialize(SimpleInventoryUI owner, int slotIndex, Image icon, Text countText, Sprite iconSprite, int quantity)
+    {
+        this.owner = owner;
+        this.slotIndex = slotIndex;
+        this.icon = icon;
+        this.countText = countText;
+
+        rectTransform = transform as RectTransform;
+        canvasGroup = GetComponent<CanvasGroup>();
+        if (canvasGroup == null)
+            canvasGroup = gameObject.AddComponent<CanvasGroup>();
+
+        ApplyVisual(iconSprite, quantity);
+    }
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Left) return;
+        owner?.HandleSlotClicked(slotIndex);
+    }
+
+    public void OnBeginDrag(PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Left) return;
+
+        startPosition = rectTransform.position;
+        canvasGroup.blocksRaycasts = false;
+        owner?.BeginSlotDrag(slotIndex);
+    }
+
+    public void OnDrag(PointerEventData eventData)
+    {
+        rectTransform.position += (Vector3)eventData.delta;
+    }
+
+    public void OnEndDrag(PointerEventData eventData)
+    {
+        rectTransform.position = startPosition;
+        canvasGroup.blocksRaycasts = true;
+        owner?.EndSlotDrag();
+    }
+
+    public void OnDrop(PointerEventData eventData)
+    {
+        if (eventData.pointerDrag == null || eventData.pointerDrag == gameObject) return;
+
+        owner?.HandleSlotDrop(slotIndex);
+    }
+
+    private void ApplyVisual(Sprite iconSprite, int quantity)
+    {
+        if (icon != null)
+        {
+            icon.sprite = iconSprite;
+            icon.color = (iconSprite != null) ? Color.white : new Color(1, 1, 1, 0);
+        }
+
+        if (countText != null)
+        {
+            countText.text = (quantity > 1) ? quantity.ToString() : string.Empty;
+        }
     }
 }

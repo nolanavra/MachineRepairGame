@@ -179,6 +179,39 @@ public class Inventory : MonoBehaviour
     /// Read-only access to slots for UI, etc.
     public IReadOnlyList<ItemStack> GetSlots() => slots;
 
+    /// <summary>
+    /// Consume a single item from the given slot. Returns false if the slot is empty or invalid.
+    /// </summary>
+    public bool ConsumeFromSlot(int slotIndex, out string itemId)
+    {
+        itemId = null;
+        if (slotIndex < 0 || slotIndex >= slots.Count) return false;
+
+        var slot = slots[slotIndex];
+        if (slot.IsEmpty) return false;
+
+        itemId = slot.id;
+        slot.quantity -= 1;
+        if (slot.quantity <= 0)
+            slot.Clear();
+
+        slots[slotIndex] = slot;
+        return true;
+    }
+
+    /// <summary>
+    /// Swap two slot positions. Returns false if indices are invalid.
+    /// </summary>
+    public bool SwapSlots(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= slots.Count) return false;
+        if (toIndex < 0 || toIndex >= slots.Count) return false;
+        if (fromIndex == toIndex) return true;
+
+        (slots[fromIndex], slots[toIndex]) = (slots[toIndex], slots[fromIndex]);
+        return true;
+    }
+
     /// Helper to look up an ItemDef by id.
     public ThingDef GetDef(string id)
     {
