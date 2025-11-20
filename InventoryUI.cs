@@ -131,7 +131,7 @@ public class SimpleInventoryUI : MonoBehaviour
         for (int i = 0; i < slotInstances.Count; i++)
         {
             if (slotInstances[i] != null)
-                Destroy(slotInstances[i]);
+                DestroyImmediate(slotInstances[i]);
         }
         slotInstances.Clear();
     }
@@ -210,8 +210,6 @@ internal class InventorySlotUI : MonoBehaviour, IPointerClickHandler, IBeginDrag
 
     public void OnBeginDrag(PointerEventData eventData)
     {
-        if (eventData.button != PointerEventData.InputButton.Left) return;
-
         startPosition = rectTransform.position;
         canvasGroup.blocksRaycasts = false;
         owner?.BeginSlotDrag(slotIndex);
@@ -231,8 +229,6 @@ internal class InventorySlotUI : MonoBehaviour, IPointerClickHandler, IBeginDrag
 
     public void OnDrop(PointerEventData eventData)
     {
-        if (eventData.pointerDrag == null || eventData.pointerDrag == gameObject) return;
-
         owner?.HandleSlotDrop(slotIndex);
     }
 
