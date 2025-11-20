@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using MachineRepair;
 using Unity.VisualScripting;
@@ -11,11 +12,30 @@ namespace MachineRepair.Grid
 {
     public class InputRouter : MonoBehaviour, IGameModeListener
     {
+        public enum CellSelectionTarget
+        {
+            None,
+            Component,
+            Pipe,
+            Wire
+        }
+
+        public struct SelectionInfo
+        {
+            public bool hasSelection;
+            public Vector2Int cell;
+            public cellDef cellData;
+            public CellSelectionTarget target;
+        }
+
+        public event Action<SelectionInfo> SelectionChanged;
+
         [Header("References")]
         [Tooltip("Auto-found at runtime if left unassigned.")]
         [SerializeField] private GridManager grid;
         [SerializeField] private Inventory inventory;
         [SerializeField] private GameObject currentComponentPrefab;
+        [SerializeField] private WirePlacementTool wireTool;
         private Camera cam;
 
         [Header("Placement State")]
@@ -42,6 +62,13 @@ namespace MachineRepair.Grid
         private SpriteRenderer highlightRenderer;
         private Vector2Int highlightLastPosition;
         private readonly List<SpriteRenderer> footprintHighlights = new();
+
+        private int selectionCycleIndex;
+        private readonly List<CellSelectionTarget> selectionCycleOrder = new();
+        private Vector2Int selectedCell = new Vector2Int(int.MinValue, int.MinValue);
+        private CellSelectionTarget selectedTarget = CellSelectionTarget.None;
+
+        public SelectionInfo CurrentSelection { get; private set; }
         
 
         private void Awake()
@@ -49,6 +76,11 @@ namespace MachineRepair.Grid
             cam = Camera.main;
             if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
             if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
+            if (wireTool == null) wireTool = Object.FindFirstObjectByType<WirePlacementTool>();
+            if (wireTool == null)
+            {
+                Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
+            }
             SetupHighlightVisual();
         }
 
@@ -256,10 +288,7 @@ namespace MachineRepair.Grid
         private void OnLeftClick_WirePlacement(cellDef cell, Vector2Int cellPos)
         {
             if (!CellUsable(cell)) return;
-
-            // TODO: Replace with your wire placement logic.
-            // if (!WireTool.HasActivePath) WireTool.StartAt(cellPos); else WireTool.AddPoint(cellPos);
-            Debug.Log($"[WirePlacement] Point at {cellPos}");
+            wireTool?.HandleClick(cellPos);
         }
 
         /// <summary>
@@ -268,9 +297,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnRightClick_WirePlacement(cellDef cell, Vector2Int cellPos)
         {
-            // TODO: Replace with your wire cancel/undo logic.
-            // WireTool.UndoLastPoint();
-            Debug.Log($"[WirePlacement] Undo/Cancel at {cellPos}");
+            wireTool?.CancelPreview();
         }
 
         #endregion
@@ -351,6 +378,40 @@ namespace MachineRepair.Grid
             if (EventSystem.current == null) return false;
             // Works with mouse (-1) in standalone; for advanced setups, use PointerEventData.
             return EventSystem.current.IsPointerOverGameObject();
+        }
+
+        private List<CellSelectionTarget> BuildSelectionTargets(cellDef cell)
+        {
+            var targets = new List<CellSelectionTarget>();
+
+            if (cell.HasComponent) targets.Add(CellSelectionTarget.Component);
+            if (cell.HasPipe) targets.Add(CellSelectionTarget.Pipe);
+            if (cell.HasWire) targets.Add(CellSelectionTarget.Wire);
+
+            return targets;
+        }
+
+        private void ApplySelection(Vector2Int cellPos, cellDef cell, CellSelectionTarget target)
+        {
+            CurrentSelection = new SelectionInfo
+            {
+                hasSelection = target != CellSelectionTarget.None,
+                cell = cellPos,
+                cellData = cell,
+                target = target
+            };
+
+            SelectionChanged?.Invoke(CurrentSelection);
+        }
+
+        private void ClearSelection()
+        {
+            selectionCycleIndex = 0;
+            selectionCycleOrder.Clear();
+            selectedCell = new Vector2Int(int.MinValue, int.MinValue);
+            selectedTarget = CellSelectionTarget.None;
+            CurrentSelection = new SelectionInfo { hasSelection = false };
+            SelectionChanged?.Invoke(CurrentSelection);
         }
 
         // ----------------- Mouse helpers -----------------
@@ -486,6 +547,10 @@ namespace MachineRepair.Grid
             {
                 RefundPendingPlacement();
                 ClearPlacementVisuals();
+            }
+            else if (oldMode == GameMode.WirePlacement)
+            {
+                wireTool?.CancelPreview();
             }
         }
 
