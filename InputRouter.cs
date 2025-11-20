@@ -75,9 +75,9 @@ namespace MachineRepair.Grid
         private void Awake()
         {
             cam = Camera.main;
-            if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
-            if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
-            if (wireTool == null) wireTool = Object.FindFirstObjectByType<WirePlacementTool>();
+            if (grid == null) grid = FindFirstObjectByType<GridManager>();
+            if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+            if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
             if (wireTool == null)
             {
                 Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
@@ -712,4 +712,5 @@ namespace MachineRepair.Grid
 
     }
 }
+
 
