@@ -54,6 +54,12 @@ public class SimpleInventoryUI : MonoBehaviour
 
     public void ShowHideInventory()
     {
+        if (inventoryPanel == null)
+        {
+            Debug.LogWarning("SimpleInventoryUI: No inventory panel assigned to toggle.");
+            return;
+        }
+
         if (inventoryPanel.activeSelf) inventoryPanel.SetActive(false);
         else inventoryPanel.SetActive(true);
     }
