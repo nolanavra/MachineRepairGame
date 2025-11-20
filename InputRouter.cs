@@ -537,14 +537,14 @@ namespace MachineRepair.Grid
         }
 
         #region Component Placement Helpers
-        public bool BeginComponentPlacement(string itemId)
+        public bool BeginComponentPlacement(string itemId, bool removeFromInventory = true)
         {
             if (string.IsNullOrEmpty(itemId) || inventory == null) return false;
 
             ThingDef def = inventory.GetDef(itemId);
             if (def == null) return false;
 
-            if (!inventory.RemoveItem(itemId, 1)) return false;
+            if (removeFromInventory && !inventory.RemoveItem(itemId, 1)) return false;
 
             currentPlacementDef = def;
             currentPlacementItemId = itemId;
