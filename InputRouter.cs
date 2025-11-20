@@ -12,6 +12,25 @@ namespace MachineRepair.Grid
 {
     public class InputRouter : MonoBehaviour, IGameModeListener
     {
+        
+            public enum CellSelectionTarget
+        {
+            None,
+            Component,
+            Pipe,
+            Wire
+        }
+        
+        public struct SelectionInfo
+        {
+            public bool hasSelection;
+            public Vector2Int cell;
+            public cellDef cellData;
+            public CellSelectionTarget target;
+        }
+
+        public event Action<SelectionInfo> SelectionChanged;
+        
         [Header("References")]
         [Tooltip("Auto-found at runtime if left unassigned.")]
         [SerializeField] private GridManager grid;
@@ -693,3 +712,4 @@ namespace MachineRepair.Grid
 
     }
 }
+
