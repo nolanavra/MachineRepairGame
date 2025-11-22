@@ -12,19 +12,6 @@ namespace MachineRepair {
         Component,      // components or pipes that "occupy" the cell
 
     }
-    public enum ComponentType{
-        None,
-        ChassisPowerConnection,
-        ChassisWaterConnection,
-        Boiler,
-        Pump,
-        Grouphead,
-        Controler,
-        SolonoidValve,
-        FlowRestrictor
-        
-
-    }
 
     public enum WireType{
         None,

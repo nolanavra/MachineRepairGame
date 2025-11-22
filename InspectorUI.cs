@@ -78,7 +78,7 @@ public class InspectorUI : MonoBehaviour
     private void PresentComponent(InputRouter.SelectionInfo selection)
     {
         var def = ResolveComponentDef(selection.cellData.component);
-        string displayName = def?.displayName ?? selection.cellData.component.ToString();
+        string displayName = def?.displayName ?? selection.cellData.component?.name ?? "Component";
 
         SetTitle(displayName);
         SetDescription(def?.description);
@@ -119,15 +119,9 @@ public class InspectorUI : MonoBehaviour
         SetParameters(string.Empty);
     }
 
-    private ThingDef ResolveComponentDef(ComponentType type)
+    private ThingDef ResolveComponentDef(MachineComponent component)
     {
-        if (inventory == null || type == ComponentType.None) return null;
-        foreach (ThingDef def in inventory.inventoryCatalog)
-        {
-            if (def != null && def.type == type)
-                return def;
-        }
-        return null;
+        return component != null ? component.def : null;
     }
 
     private string BuildComponentParameters(ThingDef def)
@@ -166,7 +160,7 @@ public class InspectorUI : MonoBehaviour
             if (!neighborCell.HasComponent) continue;
 
             var def = ResolveComponentDef(neighborCell.component);
-            string label = def?.displayName ?? neighborCell.component.ToString();
+            string label = def?.displayName ?? neighborCell.component.name;
             if (!neighbors.Contains(label))
                 neighbors.Add(label);
         }
@@ -198,10 +192,10 @@ public class InspectorUI : MonoBehaviour
         return $"Connects {startLabel} to {endLabel}.";
     }
 
-    private string ResolveComponentName(ComponentType type)
+    private string ResolveComponentName(MachineComponent component)
     {
-        var def = ResolveComponentDef(type);
-        return def?.displayName ?? type.ToString();
+        var def = ResolveComponentDef(component);
+        return def?.displayName ?? component?.name ?? "Component";
     }
 
     private void SetTitle(string value)

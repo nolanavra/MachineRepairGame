@@ -257,11 +257,14 @@ namespace MachineRepair.Grid
             var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
             if (!IsFootprintValid(footprintCells)) return;
 
+            MachineComponent machine = CreatePlacedComponent(cellPos);
+            if (machine == null) return;
+
             for (int i = 0; i < footprintCells.Count; i++)
             {
                 var target = footprintCells[i];
                 var targetCell = grid.GetCell(target);
-                targetCell.component = currentPlacementDef.type;
+                targetCell.component = machine;
                 targetCell.placeability = CellPlaceability.ConnectorsOnly;
                 grid.SetCell(target, targetCell);
             }
@@ -623,6 +626,32 @@ namespace MachineRepair.Grid
                 if (cell.HasComponent) return false;
             }
             return true;
+        }
+
+        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell)
+        {
+            if (currentPlacementDef == null || grid == null) return null;
+
+            GameObject instance = currentComponentPrefab != null
+                ? Instantiate(currentComponentPrefab)
+                : new GameObject(currentPlacementDef.displayName ?? currentPlacementDef.defName ?? "MachineComponent");
+
+            instance.name = currentPlacementDef.displayName ?? currentPlacementDef.defName ?? instance.name;
+
+            var machine = instance.GetComponent<MachineComponent>();
+            if (machine == null)
+                machine = instance.AddComponent<MachineComponent>();
+
+            machine.def = currentPlacementDef;
+            machine.grid = grid;
+            machine.footprint = currentPlacementDef.footprint;
+            machine.rotation = currentRotation;
+            machine.anchorCell = anchorCell;
+            machine.portDef = currentPlacementDef.connectionPorts;
+
+            instance.transform.position = grid.CellToWorld(anchorCell);
+
+            return machine;
         }
 
         private void SetFootprintHighlights(IReadOnlyList<Vector2Int> cells, bool valid)
