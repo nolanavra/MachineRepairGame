@@ -15,6 +15,7 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private InputRouter inputRouter;
     [SerializeField] private GridManager grid;
     [SerializeField] private Inventory inventory;
+    [SerializeField] private WirePlacementTool wireTool;
 
     [Header("UI Elements")]
     [SerializeField] private Text titleText;
@@ -27,6 +28,7 @@ public class InspectorUI : MonoBehaviour
         if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
         if (grid == null) grid = FindFirstObjectByType<GridManager>();
         if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+        if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
     }
 
     private void OnEnable()
@@ -97,7 +99,7 @@ public class InspectorUI : MonoBehaviour
         string wireLabel = selection.cellData.wire != WireType.None ? $"{selection.cellData.wire} Wire" : "Wire";
         SetTitle(wireLabel);
         SetDescription("Carries electrical or signal connections between components.");
-        SetConnections(BuildConnectionSummary(selection.cell));
+        SetConnections(BuildWireConnectionSummary(selection.cell));
         SetParameters("No simulation parameters for wires.");
     }
 
@@ -176,6 +178,30 @@ public class InspectorUI : MonoBehaviour
             2 => $"Between {neighbors[0]} and {neighbors[1]}",
             _ => $"Connections: {string.Join(", ", neighbors)}"
         };
+    }
+
+    private string BuildWireConnectionSummary(Vector2Int cell)
+    {
+        if (wireTool == null) return BuildConnectionSummary(cell);
+        if (!wireTool.TryGetConnection(cell, out var connection))
+            return "Wire is not connected between power ports.";
+
+        string startName = ResolveComponentName(connection.startComponent);
+        string endName = ResolveComponentName(connection.endComponent);
+
+        string startLabel = $"{startName} at ({connection.startCell.x}, {connection.startCell.y})";
+        string endLabel = $"{endName} at ({connection.endCell.x}, {connection.endCell.y})";
+
+        if (connection.startCell == connection.endCell)
+            return $"Connects {startLabel} to itself.";
+
+        return $"Connects {startLabel} to {endLabel}.";
+    }
+
+    private string ResolveComponentName(ComponentType type)
+    {
+        var def = ResolveComponentDef(type);
+        return def?.displayName ?? type.ToString();
     }
 
     private void SetTitle(string value)
