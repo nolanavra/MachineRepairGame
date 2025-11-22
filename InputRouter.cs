@@ -12,6 +12,25 @@ namespace MachineRepair.Grid
 {
     public class InputRouter : MonoBehaviour, IGameModeListener
     {
+        
+            public enum CellSelectionTarget
+        {
+            None,
+            Component,
+            Pipe,
+            Wire
+        }
+        
+        public struct SelectionInfo
+        {
+            public bool hasSelection;
+            public Vector2Int cell;
+            public cellDef cellData;
+            public CellSelectionTarget target;
+        }
+
+        public event Action<SelectionInfo> SelectionChanged;
+        
         [Header("References")]
         [Tooltip("Auto-found at runtime if left unassigned.")]
         [SerializeField] private GridManager grid;
@@ -56,9 +75,9 @@ namespace MachineRepair.Grid
         private void Awake()
         {
             cam = Camera.main;
-            if (grid == null) grid = Object.FindFirstObjectByType<GridManager>();
-            if (inventory == null) inventory = Object.FindFirstObjectByType<Inventory>();
-            if (wireTool == null) wireTool = Object.FindFirstObjectByType<WirePlacementTool>();
+            if (grid == null) grid = FindFirstObjectByType<GridManager>();
+            if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+            if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
             if (wireTool == null)
             {
                 Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
@@ -238,11 +257,14 @@ namespace MachineRepair.Grid
             var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
             if (!IsFootprintValid(footprintCells)) return;
 
+            MachineComponent machine = CreatePlacedComponent(cellPos);
+            if (machine == null) return;
+
             for (int i = 0; i < footprintCells.Count; i++)
             {
                 var target = footprintCells[i];
                 var targetCell = grid.GetCell(target);
-                targetCell.component = currentPlacementDef.type;
+                targetCell.component = machine;
                 targetCell.placeability = CellPlaceability.ConnectorsOnly;
                 grid.SetCell(target, targetCell);
             }
@@ -606,6 +628,32 @@ namespace MachineRepair.Grid
             return true;
         }
 
+        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell)
+        {
+            if (currentPlacementDef == null || grid == null) return null;
+
+            GameObject instance = currentComponentPrefab != null
+                ? Instantiate(currentComponentPrefab)
+                : new GameObject(currentPlacementDef.displayName ?? currentPlacementDef.defName ?? "MachineComponent");
+
+            instance.name = currentPlacementDef.displayName ?? currentPlacementDef.defName ?? instance.name;
+
+            var machine = instance.GetComponent<MachineComponent>();
+            if (machine == null)
+                machine = instance.AddComponent<MachineComponent>();
+
+            machine.def = currentPlacementDef;
+            machine.grid = grid;
+            machine.footprint = currentPlacementDef.footprint;
+            machine.rotation = currentRotation;
+            machine.anchorCell = anchorCell;
+            machine.portDef = currentPlacementDef.connectionPorts;
+
+            instance.transform.position = grid.CellToWorld(anchorCell);
+
+            return machine;
+        }
+
         private void SetFootprintHighlights(IReadOnlyList<Vector2Int> cells, bool valid)
         {
             EnsureFootprintHighlightPool(cells.Count);
@@ -693,3 +741,5 @@ namespace MachineRepair.Grid
 
     }
 }
+
+

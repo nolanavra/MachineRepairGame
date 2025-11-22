@@ -15,6 +15,7 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private InputRouter inputRouter;
     [SerializeField] private GridManager grid;
     [SerializeField] private Inventory inventory;
+    [SerializeField] private WirePlacementTool wireTool;
 
     [Header("UI Elements")]
     [SerializeField] private Text titleText;
@@ -27,6 +28,7 @@ public class InspectorUI : MonoBehaviour
         if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
         if (grid == null) grid = FindFirstObjectByType<GridManager>();
         if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+        if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
     }
 
     private void OnEnable()
@@ -76,7 +78,7 @@ public class InspectorUI : MonoBehaviour
     private void PresentComponent(InputRouter.SelectionInfo selection)
     {
         var def = ResolveComponentDef(selection.cellData.component);
-        string displayName = def?.displayName ?? selection.cellData.component.ToString();
+        string displayName = def?.displayName ?? selection.cellData.component?.name ?? "Component";
 
         SetTitle(displayName);
         SetDescription(def?.description);
@@ -97,7 +99,7 @@ public class InspectorUI : MonoBehaviour
         string wireLabel = selection.cellData.wire != WireType.None ? $"{selection.cellData.wire} Wire" : "Wire";
         SetTitle(wireLabel);
         SetDescription("Carries electrical or signal connections between components.");
-        SetConnections(BuildConnectionSummary(selection.cell));
+        SetConnections(BuildWireConnectionSummary(selection.cell));
         SetParameters("No simulation parameters for wires.");
     }
 
@@ -117,15 +119,9 @@ public class InspectorUI : MonoBehaviour
         SetParameters(string.Empty);
     }
 
-    private ThingDef ResolveComponentDef(ComponentType type)
+    private ThingDef ResolveComponentDef(MachineComponent component)
     {
-        if (inventory == null || type == ComponentType.None) return null;
-        foreach (ThingDef def in inventory.inventoryCatalog)
-        {
-            if (def != null && def.type == type)
-                return def;
-        }
-        return null;
+        return component != null ? component.def : null;
     }
 
     private string BuildComponentParameters(ThingDef def)
@@ -164,7 +160,7 @@ public class InspectorUI : MonoBehaviour
             if (!neighborCell.HasComponent) continue;
 
             var def = ResolveComponentDef(neighborCell.component);
-            string label = def?.displayName ?? neighborCell.component.ToString();
+            string label = def?.displayName ?? neighborCell.component.name;
             if (!neighbors.Contains(label))
                 neighbors.Add(label);
         }
@@ -176,6 +172,30 @@ public class InspectorUI : MonoBehaviour
             2 => $"Between {neighbors[0]} and {neighbors[1]}",
             _ => $"Connections: {string.Join(", ", neighbors)}"
         };
+    }
+
+    private string BuildWireConnectionSummary(Vector2Int cell)
+    {
+        if (wireTool == null) return BuildConnectionSummary(cell);
+        if (!wireTool.TryGetConnection(cell, out var connection))
+            return "Wire is not connected between power ports.";
+
+        string startName = ResolveComponentName(connection.startComponent);
+        string endName = ResolveComponentName(connection.endComponent);
+
+        string startLabel = $"{startName} at ({connection.startCell.x}, {connection.startCell.y})";
+        string endLabel = $"{endName} at ({connection.endCell.x}, {connection.endCell.y})";
+
+        if (connection.startCell == connection.endCell)
+            return $"Connects {startLabel} to itself.";
+
+        return $"Connects {startLabel} to {endLabel}.";
+    }
+
+    private string ResolveComponentName(MachineComponent component)
+    {
+        var def = ResolveComponentDef(component);
+        return def?.displayName ?? component?.name ?? "Component";
     }
 
     private void SetTitle(string value)

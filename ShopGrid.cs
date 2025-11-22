@@ -97,7 +97,7 @@ namespace MachineRepair.Grid
 
                 //Set all cells to empty to start
                 cellByIndex[i].pipe = false;
-                cellByIndex[i].component = ComponentType.None;
+                cellByIndex[i].component = null;
                 cellByIndex[i].wire = WireType.None;
 
 

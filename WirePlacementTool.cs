@@ -12,10 +12,22 @@ namespace MachineRepair
     /// </summary>
     public class WirePlacementTool : MonoBehaviour
     {
+        public struct WireConnectionInfo
+        {
+            public Vector2Int startCell;
+            public Vector2Int endCell;
+            public MachineComponent startComponent;
+            public MachineComponent endComponent;
+            public WireType wireType;
+        }
+
         [Header("References")]
         [SerializeField] private GridManager grid;
         [SerializeField] private Camera cameraOverride;
         [SerializeField] private LineRenderer wirePreviewPrefab;
+
+        [Header("Appearance")]
+        [SerializeField] private Color wireColor = Color.cyan;
 
         [Header("Behavior")]
         [SerializeField] private WireType wireType = WireType.AC;
@@ -25,6 +37,8 @@ namespace MachineRepair
         private Camera cam;
         private LineRenderer activePreview;
         private readonly List<LineRenderer> placedWires = new();
+        private readonly List<WireConnectionInfo> connections = new();
+        private readonly Dictionary<Vector2Int, WireConnectionInfo> connectionByCell = new();
         private Vector2Int? startCell;
 
         private void Awake()
@@ -60,7 +74,7 @@ namespace MachineRepair
             if (grid == null || cam == null) return;
             if (!grid.InBounds(cellPos.x, cellPos.y)) return;
             if (!grid.TryGetCell(cellPos, out var cell)) return;
-            if (!IsPortCell(cell)) return;
+            if (!IsPowerPortCell(cell)) return;
 
             if (!startCell.HasValue)
             {
@@ -84,10 +98,22 @@ namespace MachineRepair
             }
         }
 
-        private bool IsPortCell(cellDef cell)
+        /// <summary>
+        /// Updates the preview and future wires to use a selected color.
+        /// </summary>
+        public void SetWireColor(Color color)
+        {
+            wireColor = color;
+            ApplyWireColor(activePreview);
+        }
+
+        /// <summary>
+        /// Returns true when the cell represents a power connection port.
+        /// </summary>
+        private bool IsPowerPortCell(cellDef cell)
         {
             if (cell.placeability == CellPlaceability.Blocked) return false;
-            return cell.HasComponent || cell.placeability == CellPlaceability.ConnectorsOnly;
+            return cell.HasComponent && cell.component.def != null && cell.component.def.type == ComponentType.ChassisPowerConnection;
         }
 
         private void BeginPreview(Vector2Int cellPos)
@@ -115,6 +141,7 @@ namespace MachineRepair
 
             ApplyWireToGrid(path);
             RenderFinalWire(path);
+            RegisterConnection(path, targetCell);
 
             startCell = null;
             activePreview = null;
@@ -148,12 +175,11 @@ namespace MachineRepair
                 go.transform.SetParent(transform, worldPositionStays: false);
                 activePreview = go.AddComponent<LineRenderer>();
                 activePreview.material = new Material(Shader.Find("Sprites/Default"));
-                activePreview.startColor = Color.cyan;
-                activePreview.endColor = Color.cyan;
                 activePreview.useWorldSpace = true;
                 activePreview.sortingOrder = 100;
             }
 
+            ApplyWireColor(activePreview);
             activePreview.widthMultiplier = lineWidth;
         }
 
@@ -231,6 +257,7 @@ namespace MachineRepair
                 renderer = activePreview;
             }
 
+            ApplyWireColor(renderer);
             renderer.positionCount = path.Count;
             for (int i = 0; i < path.Count; i++)
             {
@@ -240,6 +267,49 @@ namespace MachineRepair
             }
 
             placedWires.Add(renderer);
+        }
+
+        private void ApplyWireColor(LineRenderer renderer)
+        {
+            if (renderer == null) return;
+            renderer.startColor = wireColor;
+            renderer.endColor = wireColor;
+        }
+
+        /// <summary>
+        /// Retrieves the connection endpoints associated with a wire cell.
+        /// </summary>
+        public bool TryGetConnection(Vector2Int cell, out WireConnectionInfo info)
+        {
+            return connectionByCell.TryGetValue(cell, out info);
+        }
+
+        /// <summary>
+        /// Returns all known wire connections.
+        /// </summary>
+        public IReadOnlyList<WireConnectionInfo> Connections => connections;
+
+        private void RegisterConnection(List<Vector2Int> path, Vector2Int targetCell)
+        {
+            if (!startCell.HasValue) return;
+            if (!grid.TryGetCell(startCell.Value, out var startCellDef)) return;
+            if (!grid.TryGetCell(targetCell, out var endCellDef)) return;
+            if (startCellDef.component == null || endCellDef.component == null) return;
+
+            var connection = new WireConnectionInfo
+            {
+                startCell = startCell.Value,
+                endCell = targetCell,
+                startComponent = startCellDef.component,
+                endComponent = endCellDef.component,
+                wireType = wireType
+            };
+
+            connections.Add(connection);
+            foreach (var pos in path)
+            {
+                connectionByCell[pos] = connection;
+            }
         }
     }
 }
