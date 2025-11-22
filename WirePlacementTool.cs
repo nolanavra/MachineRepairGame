@@ -16,8 +16,8 @@ namespace MachineRepair
         {
             public Vector2Int startCell;
             public Vector2Int endCell;
-            public ComponentType startComponent;
-            public ComponentType endComponent;
+            public MachineComponent startComponent;
+            public MachineComponent endComponent;
             public WireType wireType;
         }
 
@@ -113,7 +113,7 @@ namespace MachineRepair
         private bool IsPowerPortCell(cellDef cell)
         {
             if (cell.placeability == CellPlaceability.Blocked) return false;
-            return cell.HasComponent && cell.component == ComponentType.ChassisPowerConnection;
+            return cell.HasComponent && cell.component.def != null && cell.component.def.type == ComponentType.ChassisPowerConnection;
         }
 
         private void BeginPreview(Vector2Int cellPos)
@@ -294,6 +294,7 @@ namespace MachineRepair
             if (!startCell.HasValue) return;
             if (!grid.TryGetCell(startCell.Value, out var startCellDef)) return;
             if (!grid.TryGetCell(targetCell, out var endCellDef)) return;
+            if (startCellDef.component == null || endCellDef.component == null) return;
 
             var connection = new WireConnectionInfo
             {
