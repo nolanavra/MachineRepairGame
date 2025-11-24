@@ -99,6 +99,7 @@ namespace MachineRepair.Grid
                 cellByIndex[i].pipe = false;
                 cellByIndex[i].component = null;
                 cellByIndex[i].wire = WireType.None;
+                cellByIndex[i].wireInstance = null;
 
 
                 var (x, y) = FromIndex(i);
