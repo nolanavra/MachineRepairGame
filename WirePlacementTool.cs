@@ -19,6 +19,7 @@ namespace MachineRepair
             public MachineComponent startComponent;
             public MachineComponent endComponent;
             public WireType wireType;
+            public PlacedWire placedWire;
         }
 
         [Header("References")]
@@ -33,6 +34,11 @@ namespace MachineRepair
         [SerializeField] private WireType wireType = WireType.AC;
         [SerializeField] private float previewZOffset = -0.1f;
         [SerializeField] private float lineWidth = 0.05f;
+
+        [Header("Simulation")]
+        [SerializeField] private float defaultWireResistance = 1f;
+        [SerializeField] private float maxWireCurrentBeforeDamage = 10f;
+        [SerializeField] private float maxWireResistanceBeforeDamage = 5f;
 
         private Camera cam;
         private LineRenderer activePreview;
@@ -139,9 +145,16 @@ namespace MachineRepair
                 return;
             }
 
-            ApplyWireToGrid(path);
+            var placedWire = CreatePlacedWire(path, targetCell);
+            if (placedWire == null)
+            {
+                CancelPreview();
+                return;
+            }
+
+            ApplyWireToGrid(path, placedWire);
             RenderFinalWire(path);
-            RegisterConnection(path, targetCell);
+            RegisterConnection(path, targetCell, placedWire);
 
             startCell = null;
             activePreview = null;
@@ -235,13 +248,14 @@ namespace MachineRepair
             return result;
         }
 
-        private void ApplyWireToGrid(List<Vector2Int> path)
+        private void ApplyWireToGrid(List<Vector2Int> path, PlacedWire placedWire)
         {
             foreach (var cellPos in path)
             {
                 if (!grid.TryGetCell(cellPos, out var cell)) continue;
                 if (cell.HasComponent) continue;
-                cell.wire = wireType;
+                cell.wire = placedWire != null ? placedWire.wireType : wireType;
+                cell.wireInstance = placedWire;
                 grid.SetCell(cellPos, cell);
             }
         }
@@ -289,12 +303,35 @@ namespace MachineRepair
         /// </summary>
         public IReadOnlyList<WireConnectionInfo> Connections => connections;
 
-        private void RegisterConnection(List<Vector2Int> path, Vector2Int targetCell)
+        private PlacedWire CreatePlacedWire(List<Vector2Int> path, Vector2Int targetCell)
+        {
+            if (!startCell.HasValue) return null;
+            if (!grid.TryGetCell(startCell.Value, out var startCellDef)) return null;
+            if (!grid.TryGetCell(targetCell, out var endCellDef)) return null;
+            if (startCellDef.component == null || endCellDef.component == null) return null;
+
+            var go = new GameObject("PlacedWire");
+            go.transform.SetParent(transform, worldPositionStays: false);
+            var placedWire = go.AddComponent<PlacedWire>();
+            placedWire.wireType = wireType;
+            placedWire.startComponent = startCellDef.component;
+            placedWire.endComponent = endCellDef.component;
+            placedWire.startPortCell = startCell.Value;
+            placedWire.endPortCell = targetCell;
+            placedWire.occupiedCells.AddRange(path);
+            placedWire.resistance = defaultWireResistance;
+            placedWire.EvaluateDamage(maxWireCurrentBeforeDamage, maxWireResistanceBeforeDamage);
+
+            return placedWire;
+        }
+
+        private void RegisterConnection(List<Vector2Int> path, Vector2Int targetCell, PlacedWire placedWire)
         {
             if (!startCell.HasValue) return;
             if (!grid.TryGetCell(startCell.Value, out var startCellDef)) return;
             if (!grid.TryGetCell(targetCell, out var endCellDef)) return;
             if (startCellDef.component == null || endCellDef.component == null) return;
+            if (placedWire == null) return;
 
             var connection = new WireConnectionInfo
             {
@@ -302,7 +339,8 @@ namespace MachineRepair
                 endCell = targetCell,
                 startComponent = startCellDef.component,
                 endComponent = endCellDef.component,
-                wireType = wireType
+                wireType = wireType,
+                placedWire = placedWire
             };
 
             connections.Add(connection);

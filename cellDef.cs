@@ -12,12 +12,13 @@ namespace MachineRepair.Grid
         // Contents of the cell:
         public MachineComponent component;    // machine / fixture
         public WireType wire;                  // electrical
+        public PlacedWire wireInstance;        // placed wire data
         public bool pipe;                  // plumbing
 
 
         // Convenience helpers
         public bool HasComponent => component != null;
-        public bool HasWire => wire != WireType.None;
+        public bool HasWire => wireInstance != null || wire != WireType.None;
         public bool HasPipe => pipe;
     };
 }
