@@ -61,6 +61,8 @@ namespace MachineRepair.Grid
 
         private GameObject highlightObject;
         private SpriteRenderer highlightRenderer;
+        private GameObject placementPreviewObject;
+        private SpriteRenderer placementPreviewRenderer;
         private Vector2Int highlightLastPosition;
         private readonly List<SpriteRenderer> footprintHighlights = new();
 
@@ -257,7 +259,7 @@ namespace MachineRepair.Grid
             var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
             if (!IsFootprintValid(footprintCells)) return;
 
-            MachineComponent machine = CreatePlacedComponent(cellPos);
+            MachineComponent machine = CreatePlacedComponent(cellPos, footprintCells);
             if (machine == null) return;
 
             for (int i = 0; i < footprintCells.Count; i++)
@@ -615,6 +617,19 @@ namespace MachineRepair.Grid
             return cells;
         }
 
+        private Vector3 GetFootprintCenterWorld(IReadOnlyList<Vector2Int> cells)
+        {
+            if (grid == null || cells == null || cells.Count == 0) return Vector3.zero;
+
+            Vector3 sum = Vector3.zero;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                sum += grid.CellToWorld(cells[i]);
+            }
+
+            return sum / cells.Count;
+        }
+
         private bool IsFootprintValid(List<Vector2Int> cells)
         {
             for (int i = 0; i < cells.Count; i++)
@@ -628,7 +643,7 @@ namespace MachineRepair.Grid
             return true;
         }
 
-        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell)
+        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell, IReadOnlyList<Vector2Int> footprintCells)
         {
             if (currentPlacementDef == null || grid == null) return null;
 
@@ -649,7 +664,21 @@ namespace MachineRepair.Grid
             machine.anchorCell = anchorCell;
             machine.portDef = currentPlacementDef.connectionPorts;
 
-            instance.transform.position = grid.CellToWorld(anchorCell);
+            Vector3 center = GetFootprintCenterWorld(footprintCells);
+            if (center == Vector3.zero)
+                center = grid.CellToWorld(anchorCell);
+
+            instance.transform.position = center;
+            instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentRotation);
+            instance.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
+
+            var spriteRenderer = instance.GetComponent<SpriteRenderer>();
+            if (spriteRenderer == null)
+                spriteRenderer = instance.AddComponent<SpriteRenderer>();
+
+            spriteRenderer.sprite = currentPlacementDef.sprite;
+            spriteRenderer.color = Color.white;
+            spriteRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
 
             return machine;
         }
@@ -666,10 +695,31 @@ namespace MachineRepair.Grid
                 rend.transform.position = new Vector3(cells[i].x + 0.5f, cells[i].y + 0.5f, 0f);
             }
 
+            UpdatePlacementPreview(cells);
+
             for (int i = cells.Count; i < footprintHighlights.Count; i++)
             {
                 footprintHighlights[i].gameObject.SetActive(false);
             }
+        }
+
+        private void UpdatePlacementPreview(IReadOnlyList<Vector2Int> cells)
+        {
+            if (currentPlacementDef == null || currentPlacementDef.sprite == null)
+            {
+                SetPlacementPreviewActive(false);
+                return;
+            }
+
+            EnsurePlacementPreview();
+
+            placementPreviewRenderer.sprite = currentPlacementDef.sprite;
+            placementPreviewRenderer.color = new Color(1f, 1f, 1f, 0.5f);
+            placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
+            placementPreviewRenderer.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
+            placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentRotation);
+            placementPreviewRenderer.transform.position = GetFootprintCenterWorld(cells);
+            SetPlacementPreviewActive(true);
         }
 
         private void EnsureFootprintHighlightPool(int count)
@@ -688,10 +738,33 @@ namespace MachineRepair.Grid
             }
         }
 
+        private void EnsurePlacementPreview()
+        {
+            if (placementPreviewObject == null)
+            {
+                placementPreviewObject = new GameObject("componentPreview");
+                placementPreviewObject.transform.SetParent(transform, worldPositionStays: true);
+            }
+
+            placementPreviewRenderer = placementPreviewObject.GetComponent<SpriteRenderer>();
+            if (placementPreviewRenderer == null)
+                placementPreviewRenderer = placementPreviewObject.AddComponent<SpriteRenderer>();
+
+            placementPreviewRenderer.sortingLayerName = highlightSortingLayer;
+        }
+
         private void SetFootprintHighlightsActive(bool active)
         {
             for (int i = 0; i < footprintHighlights.Count; i++)
                 footprintHighlights[i].gameObject.SetActive(active);
+            if (!active)
+                SetPlacementPreviewActive(false);
+        }
+
+        private void SetPlacementPreviewActive(bool active)
+        {
+            if (placementPreviewObject != null)
+                placementPreviewObject.SetActive(active);
         }
 
         private void CancelPlacement(bool returnItemToInventory)
